@@ -1,0 +1,9 @@
+dataset_path: "C:/Users/User/projects/FinSight-RAG/data/rag/annual-reports-2024"
+vector_store_path: "C:/Users/User/projects/FinSight-RAG/data/rag/annual-reports-2024-vector-store"
+chunk_size: 500
+chunk_overlap: 100
+batch_rows: 100
+embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
+gen_model: "Qwen/Qwen2.5-1.5B-Instruct"
+temperature: 0.2
+max_new_tokens: 400
