@@ -26,22 +26,21 @@ def download_ner_dataset():
     dataset_dict["validation"].save_to_disk("data/ner/finer-139/validation")
     dataset_dict["test"].save_to_disk("data/ner/finer-139/test")
 
+def download_sentiment_analysis_dataset():
+    print("Downloading Financial PhraseBank Sentiment Analysis dataset...")
+    dataset = load_dataset("financial_phrasebank", "sentences_allagree", trust_remote_code=True)
 
-def download_rag_dataset():
-    print("Downloading EDGAR Year 2020 dataset...")
-
-    year_2020_test_dataset = load_dataset(
-        "eloukas/edgar-corpus", "year_2020", split="test", trust_remote_code=True
-    )
-    year_2020_test_dataset.save_to_disk("data/rag/edgar-2020/test")
-
-    metadata = year_2020_test_dataset.info
+    metadata = dataset["train"].info
     print("\nDataset description:")
     print(metadata.description)
     print("\n")
 
+    print("Dataset features:")
+    print(metadata.features)
+    print("\n")
+
     with open(
-        "data/rag/edgar-2020/metadata.txt",
+        "data/sentiment_analysis/financial_phrasebank/metadata.txt",
         "w",
         encoding="utf-8",
     ) as f:
@@ -49,16 +48,11 @@ def download_rag_dataset():
         f.write("\n")
         f.write(metadata.homepage)
 
-    year_2020_validate_dataset = load_dataset(
-        "eloukas/edgar-corpus", "year_2020", split="validation", trust_remote_code=True
-    )
-    year_2020_validate_dataset.save_to_disk("data/rag/edgar-2020/validation")
+    print("Saving dataset locally...")
 
-    year_2020_train_dataset = load_dataset(
-        "eloukas/edgar-corpus", "year_2020", split="train", trust_remote_code=True
-    )
-    year_2020_train_dataset.save_to_disk("data/rag/edgar-2020/train")
+    # Save locally in Hugging Face format
+    dataset["train"].save_to_disk("data/sentiment_analysis/financial_phrasebank/train")
 
 
 if __name__ == "__main__":
-    download_rag_dataset()
+    download_sentiment_analysis_dataset()

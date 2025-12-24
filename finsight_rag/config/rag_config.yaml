@@ -4,6 +4,8 @@ chunk_size: 500
 chunk_overlap: 100
 batch_rows: 100
 embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
-gen_model: "Qwen/Qwen2.5-1.5B-Instruct"
-temperature: 0.2
-max_new_tokens: 400
+gen_model: "meta-llama/Llama-3.1-8B-Instruct"
+#gen_model: "gemini-2.5-flash"
+temperature: 1.0
+max_new_tokens: 200
+top_k_chunks: 5
