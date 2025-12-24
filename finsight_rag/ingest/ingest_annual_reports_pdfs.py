@@ -1,4 +1,3 @@
-import hashlib
 from dataclasses import dataclass
 import os
 from typing import Iterable, List
@@ -13,9 +12,7 @@ from langchain_chroma import Chroma
 
 import finsight_rag.config as config
 from finsight_rag.utils import load_yaml
-
-def sha256(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+from finsight_rag.ingest.utils import extract_company_from_filename, extract_year_from_filename
 
 @dataclass
 class IngestConfig:
@@ -67,9 +64,20 @@ class AnnualReportsIngestor:
             for file in files:
                 if file.lower().endswith(".pdf"):
                     pdf_path = root + "/" + file
-                    print(f"Loading PDF: {pdf_path}")
+                    
+                    company = extract_company_from_filename(file)
+                    year = extract_year_from_filename(file)
+                    
+                    print(f"Loading PDF of {company}: {pdf_path}")
                     loader = PyPDFLoader(pdf_path)
                     docs = loader.load()
+                    
+                    # attach metadata to every page
+                    for d in docs:
+                        d.metadata["company"] = company
+                        d.metadata["file_name"] = file
+                        d.metadata["year"] = year
+
                     documents.extend(docs)
         
         min_chars_per_page = self.cfg.min_chars_per_page  # adjust as needed
