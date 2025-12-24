@@ -12,9 +12,9 @@ from langchain_core.output_parsers import StrOutputParser
 import finsight_rag.config as config
 from finsight_rag.utils import load_yaml
 
-from finsight_rag.llms.text_generator import (
-    build_hf_remote_text_gen_llm,
-    build_gemini_text_gen_llm,
+from finsight_rag.llms.llm_service import (
+    build_hf_remote_chat_llm,
+    build_gemini_chat_llm,
 )
 
 
@@ -66,12 +66,12 @@ class RAGService:
         self.retriever = self.vector_store.as_retriever(search_kwargs={"k": cfg.k})
         
         if "gemini" in cfg.gen_model.lower():
-            build_text_gen_llm = build_gemini_text_gen_llm
+            build_chat_llm = build_gemini_chat_llm
         else:
-            build_text_gen_llm = build_hf_remote_text_gen_llm
+            build_chat_llm = build_hf_remote_chat_llm
 
         # Local Transformers model wrapped for LangChain
-        self.llm = build_text_gen_llm(
+        self.llm = build_chat_llm(
             model_id=cfg.gen_model,
             max_new_tokens=cfg.max_new_tokens,
             temperature=cfg.temperature,
