@@ -1,3 +1,6 @@
 .venv
 data
 *.pyc
+gemini_api_key
+hf_api_key
+models
