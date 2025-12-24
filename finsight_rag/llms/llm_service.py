@@ -30,7 +30,7 @@ def build_hf_local_text_gen_llm(model_id: str, max_new_tokens: int = 400, temper
 
     return HuggingFacePipeline(pipeline=gen_pipe)
 
-def build_gemini_text_gen_llm(
+def build_gemini_chat_llm(
     model_id: str = "gemini-2.5-flash",
     temperature: float = 1.0,
     max_new_tokens: int = 400,
@@ -46,7 +46,7 @@ def build_gemini_text_gen_llm(
         max_output_tokens=max_new_tokens,
     )
 
-def build_hf_remote_text_gen_llm(
+def build_hf_remote_chat_llm(
     model_id: str = "Qwen/Qwen2.5-7B-Instruct",
     temperature: float = 0.0,
     max_new_tokens: int = 400,
