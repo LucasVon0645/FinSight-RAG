@@ -47,10 +47,13 @@ class AnnualReportsIngestor:
             chunk_overlap=cfg.chunk_overlap,
         )
         
+        chroma_dir = cfg.chroma_dir
+        os.makedirs(chroma_dir, exist_ok=True)
+        
         self.embeddings = HuggingFaceEmbeddings(model_name=cfg.embedding_model)
         self.vector_store = Chroma(
             collection_name=cfg.collection,
-            persist_directory=cfg.chroma_dir,
+            persist_directory=chroma_dir,
             embedding_function=self.embeddings,
         )
     
@@ -134,7 +137,7 @@ class AnnualReportsIngestor:
 if __name__ == "__main__":
     rag_config_path = (impresources.files(config) / "rag_config.yaml")
 
-    rag_config = load_yaml(rag_config_path)
+    rag_config = load_yaml(str(rag_config_path))
     dataset_path = rag_config["dataset_path"]
     vector_store_path = rag_config["vector_store_path"]
     embedding_model = rag_config.get("embedding_model", "sentence-transformers/all-MiniLM-L6-v2")
@@ -144,7 +147,7 @@ if __name__ == "__main__":
     print(f"Vector store path: {vector_store_path}")
     print(f"Embedding model: {embedding_model}")
 
-    cfg = IngestConfig(
+    anual_report_ingester_cfg = IngestConfig(
         corpus_path=dataset_path,
         chroma_dir=vector_store_path,
         collection="brazilian_annual_reports",
@@ -153,5 +156,5 @@ if __name__ == "__main__":
         batch_rows=rag_config["batch_rows"],
         embedding_model=embedding_model,
     )
-    AnnualReportsIngestor(cfg).ingest()
+    AnnualReportsIngestor(anual_report_ingester_cfg).ingest()
     print("Done.")
