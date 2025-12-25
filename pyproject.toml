@@ -30,6 +30,7 @@ langgraph = "^1.0.5"
 evaluate = "^0.4.6"
 gradio = "^6.2.0"
 gradio-client = "^2.0.2"
+seaborn = "^0.13.2"
 
 [tool.poetry.group.dev.dependencies]
 jupyter = "*"
