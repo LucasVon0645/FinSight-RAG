@@ -134,6 +134,17 @@ class AnnualReportsIngestor:
         self.add_docs_to_vector_store(chunked_docs)
         print("Ingestion complete.")
 
+    def chunk_and_add_documents(self, documents: List[Document]) -> None:
+        """
+        Chunk and add documents to the vector store in batches.
+        """
+        batch_size = self.cfg.batch_rows
+        for i in range(0, len(documents), batch_size):
+            batch_docs = documents[i:i + batch_size]
+            chunked_docs = self.chunk_documents(batch_docs)
+            self.add_docs_to_vector_store(chunked_docs)
+            print(f"Processed batch {i // batch_size + 1} with {len(batch_docs)} documents.")
+    
 if __name__ == "__main__":
     rag_config_path = (impresources.files(config) / "rag_config.yaml")
 
