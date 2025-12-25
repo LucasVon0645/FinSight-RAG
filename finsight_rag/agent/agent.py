@@ -22,6 +22,7 @@ class State(TypedDict, total=False):
     max_hops: int
     subquestion: str  # current subquestion to retrieve on
     notes: List[str]  # accumulated notes
+    subquestions: List[str] # all subquestions asked
     answer: str
     last_docs: List[Document]
     notes_src_docs: List[Document]
@@ -140,17 +141,19 @@ def plan_multihop_rag_node(state: State) -> State:
         return {"done": True}
 
     notes = "\n".join(state.get("notes", []))
+    previous_subquestions = "\n".join(state.get("subquestions", []))
     plan_dict = llm.with_structured_output(HopPlan, method="json_schema").invoke(
-        "You plan multi-hop retrieval over financial reports.\n"
-        "Return ONLY valid JSON. No extra text.\n"
-        "It MUST contain exactly these keys:\n"
-        '  - "subquestion": string\n'
-        '  - "done": boolean\n'
+        "You are planning the next retrieval step for a financial QA system.\n"
+        "Return ONLY valid JSON (no extra text).\n"
+        'Output keys exactly: {"subquestion": string, "done": boolean}\n\n'
+        f"Previous subquestions: {previous_subquestions}\n"
         f"User query: {state['query']}\n"
         f"Current notes:\n{notes}\n\n"
-        "Propose the next best subquestion to retrieve more evidence if necessary.\n"
-        "If enough evidence already, done=true.\n"
-        "Do not set done=true unless you have evidence covering all parts of the query.\n"
+        "Rules:\n"
+        "- Propose ONLY ONE next subquestion.\n"
+        "- Do NOT repeat any previous subquestion (unless you refine it to be more specific).\n"
+        "- Set done=true ONLY if the notes already contain enough evidence to answer ALL parts of the user query.\n"
+        "- If the query involves multiple entities/companies/periods/metrics, ask about ONE missing item at a time.\n"
     )
     plan = HopPlan.model_validate(plan_dict)
     
@@ -174,6 +177,7 @@ def retrieve_node(state: State) -> State:
 def notes_node(state: State) -> State:
     llm = rag_service.llm
     notes = state.get("notes", [])
+    subquestions = state.get("subquestions", [])
     docs = state.get("last_docs", [])
     notes_src_docs = state.get("notes_src_docs", [])
 
@@ -181,19 +185,27 @@ def notes_node(state: State) -> State:
     notes_src_docs.extend(top_docs)
 
     hop_sources = format_sources(top_docs)
+    subquestion = state["subquestion"]
     summary = llm.invoke(
-        "Write 2-4 bullet points of evidence from the SOURCES.\n"
-        "Rules:\n"
-        "- Each bullet MUST end with a parenthetical citation that EXACTLY matches "
-        "the source header text, e.g. (annual_report.pdf page=12 year=2023).\n"
-        "- Do NOT invent new citation formats.\n"
-        "- Preserve numbers, periods, and units.\n\n"
+        "Extract factual evidence ONLY from the SOURCES.\n"
+        "STRICT RULES:\n"
+        "- Output ONLY 2-4 bullet points. No intro text.\n"
+        "- Each bullet must be directly supported by the sources.\n"
+        "- Each bullet MUST end with a parenthetical citation that EXACTLY matches a source header, "
+        "e.g. (BTG-Annual-Report-2024.pdf page=64 year=2024).\n"
+        "- DO NOT include apologies, explanations, or any 'missing data' claims.\n"
+        "- If there is no relevant evidence in the sources, output EXACTLY: NONE\n"
+        "- Preserve numbers, currency, and units.\n\n"
         f"Subquestion: {state['subquestion']}\n\n"
         f"SOURCES:\n{hop_sources}\n"
-    ).content
+    ).content.strip()
 
-    notes.append(summary)
-    return {"notes": notes, "notes_src_docs": notes_src_docs}
+    summary = summary.strip()
+    if summary != "NONE" and summary:
+        notes.append(summary)
+    subquestions.append(subquestion)
+    
+    return {"notes": notes, "notes_src_docs": notes_src_docs, "subquestions": subquestions}
 
 
 def continue_or_end_multihop_rag(state: State) -> str:
@@ -209,13 +221,14 @@ def final_multihop_rag_node(state: State) -> State:
 
     sources_txt = format_sources(notes_src_docs)
 
+    joined_notes = "\n\n".join(notes)
+
     answer = rag_service.llm.invoke(
         "You are a financial assistant. Use the accumulated notes to answer the user's question.\n"
-        "Keep citations from the notes in the final answer verbatim "
-        "(e.g., (annual_report.pdf page=12 year=2023)).\n"
-        "Do NOT invent new citation formats.\n\n"
+        "Keep citations from the notes in the final answer, e.g., "
+        "(annual_report.pdf page=12 year=2023).\n\n"
         f"User query: {state['query']}\n"
-        f"Notes:\n{'\n\n'.join(notes)}\n"
+        f"Notes:\n{joined_notes}\n"
     ).content
 
     # Append sources for transparency/debugging.
