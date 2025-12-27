@@ -31,14 +31,9 @@ The project combines **RAG pipelines**, **agent-based reasoning**, and **fine-tu
   * Fine-tuned DistilBERT model on financial text
 * **Agent-Based Reasoning**
 
-  * Multi-step reasoning using LangGraph agents
-* **Multi-LLM Support**
+  * Multi-hop RAG using LangGraph agents
 
-  * Local and cloud-based LLMs
-* **Modular Architecture**
-
-  * Easy to extend, train, or swap components
-* **Interactive UI (Planned)**
+* **Interactive UI**
 
   * Gradio-powered web interface
 
@@ -52,7 +47,6 @@ root/
 ├── .vscode/              # VS Code configuration
 ├── data/                 # Documents and datasets
 ├── models/               # Saved and fine-tuned models
-├── tests/                # Unit and integration tests
 ├── finsight_rag/         # Core application package
 │   ├── agent/            # LangGraph agent logic
 │   ├── config/           # Configuration files
@@ -63,7 +57,8 @@ root/
 │   ├── sentiment/        # Sentiment analysis module
 │   ├── train/            # Model training scripts
 │   ├── app.py            # Application entry point
-│   └── utils.py          # Shared utilities
+│   ├── utils.py          # Shared utilities
+│   └── tests/            # Unit and integration tests
 ├── pyproject.toml        # Project dependencies
 ├── poetry.lock           # Locked dependency versions
 └── .gitignore
