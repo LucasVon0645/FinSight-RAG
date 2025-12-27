@@ -1,7 +1,7 @@
 # FinSight RAG
 
 **FinSight RAG** is a Retrieval-Augmented Generation (RAG) application combined with **financial sentiment analysis**, designed to help users analyze and query **financial reports of companies or entities**.
-The system leverages **Large Language Models (LLMs)**, **AI agents**, and **domain-specific NLP models** to provide accurate, context-aware, and sentiment-enriched insights from financial documents.
+The system leverages **Large Language Models (LLMs)**, **AI agents**, and **domain-specific NLP models** to deliver context-aware, sentiment-driven insights grounded directly in source documents.
 
 ---
 
@@ -19,6 +19,13 @@ FinSight RAG enables users to:
 The project combines **RAG pipelines**, **agent-based reasoning**, and **fine-tuned financial NLP models** for robust financial analysis.
 
 ---
+
+## 🔨 Main Tools
+
+* LangGraph – Agent orchestration  
+* LangChain – Retrieval-Augmented Generation (RAG)  
+* Hugging Face Transformers – Financial sentiment classification  
+* Gradio – Web-based user interface
 
 ## 🧠 Core Features
 
@@ -126,36 +133,10 @@ Used for:
 
 ### 🖥️ User Interface
 
-* **Gradio** *(in development)*
+* **Gradio**
 
   * Simple and interactive UI
   * Chat-style financial analysis interface
-
----
-
-## 🔄 System Workflow
-
-1. **Ingest Financial Reports**
-
-   * Documents are loaded, cleaned, and chunked
-2. **Embed & Store**
-
-   * Chunks are embedded and stored in a vector store
-3. **User Query**
-
-   * User asks a natural language question
-4. **Retrieve Context**
-
-   * Relevant chunks are retrieved using semantic search
-5. **Agent Reasoning**
-
-   * LangGraph agent decides how to process the query
-6. **Sentiment Analysis**
-
-   * Financial sentiment is extracted where relevant
-7. **LLM Response**
-
-   * Final grounded answer is generated
 
 ---
 
@@ -164,8 +145,9 @@ Used for:
 ```bash
 git clone https://github.com/your-username/finsight-rag.git
 cd finsight-rag
+poetry config virtualenvs.in-project true
 poetry install
-poetry shell
+poetry env activate
 ```
 
 ---
@@ -176,7 +158,7 @@ poetry shell
 python finsight_rag/app.py
 ```
 
-*(Gradio UI  will be added later.)*
+Access the UI at `http://localhost:7860`.
 
 ---
 
