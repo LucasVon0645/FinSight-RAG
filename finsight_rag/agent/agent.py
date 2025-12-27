@@ -1,10 +1,18 @@
 from typing import Literal, TypedDict, List
 from pydantic import BaseModel
-from langgraph.graph import StateGraph, END
+from langgraph.graph import StateGraph, END, START
 from langchain_core.documents import Document
 
 from finsight_rag.rag.rag_service import get_rag_service
 from finsight_rag.agent.utils import dedupe_docs, format_sources
+
+
+MAPPING_ROUTE_MODE_TO_NODE = {
+    "single_hop_rag": "single_hop_rag",
+    "multihop_rag": "plan_multihop_rag",
+    "general": "general",
+    "clarify": "clarify",
+}
 
 # Get RAG service instance
 rag_service = get_rag_service()
@@ -78,7 +86,8 @@ def route_node(state: State) -> State:
 
 
 def route_next(state: State) -> str:
-    return state["route_mode"]
+    route_mode = state.get("route_mode")
+    return MAPPING_ROUTE_MODE_TO_NODE[route_mode]
 
 
 def general_node(state: State) -> State:
@@ -168,6 +177,7 @@ def plan_multihop_rag_node(state: State) -> State:
 
 # --- Retrieve evidence using your existing retriever ---
 def retrieve_node(state: State) -> State:
+    """Retrieve documents for current subquestion."""
     docs = rag_service.retrieve(state["subquestion"])
 
     return {"last_docs": docs}
@@ -175,6 +185,10 @@ def retrieve_node(state: State) -> State:
 
 # --- Update notes (store what you learned this hop) ---
 def notes_node(state: State) -> State:
+    """
+    Extract factual evidence from retrieved documents 
+    for current subquestion in multi-hop RAG.
+    """
     llm = rag_service.llm
     notes = state.get("notes", [])
     subquestions = state.get("subquestions", [])
@@ -209,6 +223,7 @@ def notes_node(state: State) -> State:
 
 
 def continue_or_end_multihop_rag(state: State) -> str:
+    """Decide whether to continue multi-hop RAG or finish."""
     if state.get("done"):
         return "final_multihop_rag"
     return "retrieve"
@@ -216,6 +231,7 @@ def continue_or_end_multihop_rag(state: State) -> str:
 
 # --- Final answer ---
 def final_multihop_rag_node(state: State) -> State:
+    """Compile all notes obtained with multi-hop RAG into final answer."""
     notes = state.get("notes", [])
     notes_src_docs = dedupe_docs(state.get("notes_src_docs", []))
 
@@ -254,18 +270,14 @@ g.set_entry_point("route")
 g.add_conditional_edges(
     "route",
     route_next,
-    {
-        "single_hop_rag": "single_hop_rag",
-        "multihop_rag": "plan_multihop_rag",
-        "general": "general",
-        "clarify": "clarify",
-    },
+    ["single_hop_rag", "plan_multihop_rag", "general", "clarify"],
 )
 
 
 g.add_conditional_edges(
     "plan_multihop_rag",
-    continue_or_end_multihop_rag
+    continue_or_end_multihop_rag,
+    ['retrieve', 'final_multihop_rag'],
 )
 g.add_edge("retrieve", "notes_rag")
 g.add_edge("notes_rag", "plan_multihop_rag")
