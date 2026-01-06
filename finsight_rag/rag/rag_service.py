@@ -1,34 +1,14 @@
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 from importlib import resources as impresources
 
 from langchain_core.documents import Document
-from langchain_chroma import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_core.vectorstores import VectorStoreRetriever
+from langchain_huggingface import ChatHuggingFace
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough, RunnableLambda
+from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
-
-import finsight_rag.config as config
-from finsight_rag.utils import load_yaml
-
-from finsight_rag.llms.llm_service import (
-    build_hf_remote_chat_llm,
-    build_gemini_chat_llm,
-)
-
-
-@dataclass
-class RAGConfig:
-    chroma_dir: str = "./annual_reports_chroma"
-    collection: str = "brazilian_annual_reports"
-    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
-    k: int = 5
-
-    gen_model: str = "Qwen/Qwen2.5-3B-Instruct"
-    temperature: float = 1.0
-    max_new_tokens: int = 400
-
 
 def format_sources(docs: List[Document]) -> str:
     blocks = []
@@ -53,29 +33,19 @@ def format_chat_history(chat_history):
     )
 
 class RAGService:
-    def __init__(self, cfg: RAGConfig):
-        self.cfg = cfg
+    """
+    RAG Service for document retrieval and question answering.
+    Uses a vector store retriever (ex Chroma) and a chat LLM (HuggingFace or Gemini).
+    """
+    def __init__(self,
+                 vector_store_retriever: VectorStoreRetriever,
+                 llm: ChatHuggingFace | ChatGoogleGenerativeAI):
 
-        # Must match your ingestion setup (same embedding + same persisted collection/dir)
-        self.embeddings = HuggingFaceEmbeddings(model_name=cfg.embedding_model)
-        self.vector_store = Chroma(
-            collection_name=cfg.collection,
-            persist_directory=cfg.chroma_dir,
-            embedding_function=self.embeddings,
-        )
-        self.retriever = self.vector_store.as_retriever(search_kwargs={"k": cfg.k})
         
-        if "gemini" in cfg.gen_model.lower():
-            build_chat_llm = build_gemini_chat_llm
-        else:
-            build_chat_llm = build_hf_remote_chat_llm
+        
+        self.retriever = vector_store_retriever
 
-        # Local Transformers model wrapped for LangChain
-        self.llm = build_chat_llm(
-            model_id=cfg.gen_model,
-            max_new_tokens=cfg.max_new_tokens,
-            temperature=cfg.temperature,
-        )
+        self.llm = llm
 
         # Prompt (simple + reliable for RAG)
         self.prompt = ChatPromptTemplate.from_messages([
@@ -122,11 +92,16 @@ class RAGService:
         return docs
     
     def answer(self, question: str, return_docs: bool = False):
-        # Generate answer
+        """
+        Generate an answer to the question using retrieved documents. The documents are
+        retrieved internally from the retriever.
+        Returns: (answer, sources_str) if return_docs is False, else (answer, docs)
+        """
+
         out = self.chain.invoke(question)
         
-        answer = out["answer"]
-        docs = out["documents"]
+        answer: str = out["answer"]
+        docs: List[Document] = out["documents"]
         
         if return_docs:
             return answer, docs
@@ -134,7 +109,7 @@ class RAGService:
         sources_str = format_sources(docs)
         return answer, sources_str
     
-    def answer_from_docs(self, question: str, docs: list[Document]):
+    def answer_from_docs(self, question: str, docs: List[Document]):
         """
         Generate an answer using ONLY the supplied docs (no retrieval).
         Returns: (answer, sources_str)
@@ -146,28 +121,3 @@ class RAGService:
 
         answer = out["answer"] if isinstance(out, dict) and "answer" in out else out
         return answer, sources_str
-
-def get_rag_service() -> RAGService:
-    # --- RAG setup ---
-    rag_config_path = (impresources.files(config) / "rag_config.yaml")
-    rag_config_dict = load_yaml(rag_config_path)
-
-    chroma_dir = rag_config_dict["vector_store_path"]
-    gen_model = rag_config_dict["gen_model"]
-    embedding_model = rag_config_dict["embedding_model"]
-    gen_model = rag_config_dict["gen_model"]
-    temperature = rag_config_dict["temperature"]
-    max_new_tokens = rag_config_dict["max_new_tokens"]
-    top_k_chunks = rag_config_dict["top_k_chunks"]
-
-    rag_service = RAGService(RAGConfig(
-        chroma_dir=chroma_dir,
-        collection="brazilian_annual_reports",
-        embedding_model=embedding_model,
-        gen_model=gen_model,
-        temperature=temperature,
-        max_new_tokens=max_new_tokens,
-        k=top_k_chunks,
-    ))
-    
-    return rag_service
