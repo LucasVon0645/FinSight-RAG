@@ -1,14 +1,12 @@
 import os
 import shutil
 import gradio as gr
-from langchain_community.document_loaders import PyPDFLoader
-
 
 import finsight_rag.agent.agent as agent
-from finsight_rag.ingest.utils import extract_company_from_filename, extract_year_from_filename
 from finsight_rag.utils import get_local_pdfs_dir, list_local_pdfs, get_pdf_path
 
 app = agent.app
+vector_store_wrapper = agent.vector_store_wrapper
 
 PDF_DIR = get_local_pdfs_dir()
 
@@ -35,7 +33,7 @@ def call_agent(message: str, history):
         if subquestions:
             debug_md.append("**subquestions:**\n" + "\n".join([f"- {s}" for s in subquestions]))
         if notes:
-            debug_md.append("**notes:**\n" + "\n".join([f"- {s}" for s in notes]))
+            debug_md.append("**notes:**\n" + "\n".join([f"{s}" for s in notes]))
     debug_text = "\n\n".join(debug_md) if debug_md else "—"
 
     # NEW: messages format
@@ -69,40 +67,19 @@ def ingest_pdf(uploaded_pdf_path: str):
         )
 
     filename = os.path.basename(uploaded_pdf_path)
-    dest_filename = filename
-    dest_path = os.path.join(PDF_DIR, dest_filename)
+    dest_path = os.path.join(PDF_DIR, filename)
 
     # Save locally
     shutil.copy2(uploaded_pdf_path, dest_path)
 
-    # Extract metadata
-    company = extract_company_from_filename(dest_filename)
-    year = extract_year_from_filename(dest_filename)
-
-    # Load PDF pages
-    loader = PyPDFLoader(dest_path)
-    docs = loader.load()
-
-    for d in docs:
-        d.metadata["company"] = company
-        d.metadata["file_name"] = dest_filename
-        if year is not None:
-            d.metadata["year"] = year
-
     # Add to vector store
-    # If your rag_service is in a different place, adjust this line:
-    agent.rag_service.vector_store.add_documents(docs)
+    status = vector_store_wrapper.add_document_from_filepath(dest_path)
 
-    status = (
-        f"✅ Saved to: `{dest_path}`\n\n"
-        f"📄 Loaded **{len(docs)}** pages\n\n"
-        f"🏢 company: `{company}`\n\n"
-        f"📅 year: `{year if year is not None else 'not found'}`"
-    )
-
+    status = "✅ PDF saved to local folder!\n\n" + status
+    
     return (
         gr.Markdown(value=status),
-        refresh_pdf_list(dropdown_value=dest_filename),
+        refresh_pdf_list(dropdown_value=filename),
     )
 
 

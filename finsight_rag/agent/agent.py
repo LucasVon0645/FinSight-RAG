@@ -1,11 +1,12 @@
 from typing import Literal, TypedDict, List
 from pydantic import BaseModel
-from langgraph.graph import StateGraph, END, START
+from langgraph.graph import StateGraph, END
 from langchain_core.documents import Document
 
-from finsight_rag.rag.rag_service import get_rag_service
+from finsight_rag.llms.llm_service import get_chat_llm_from_cfg
+from finsight_rag.vector_store.vector_store_wrapper import VectorStoreWrapper
+from finsight_rag.rag.rag_service import RAGService
 from finsight_rag.agent.utils import dedupe_docs, format_sources
-
 
 MAPPING_ROUTE_MODE_TO_NODE = {
     "single_hop_rag": "single_hop_rag",
@@ -14,11 +15,13 @@ MAPPING_ROUTE_MODE_TO_NODE = {
     "clarify": "clarify",
 }
 
-# Get RAG service instance
-rag_service = get_rag_service()
-
 RouteModeType = Literal["single_hop_rag", "multihop_rag", "general", "clarify"]
 
+llm = get_chat_llm_from_cfg()
+vector_store_wrapper = VectorStoreWrapper()  # load or create your Chroma vector store here
+vector_store_retriever = vector_store_wrapper.get_retriever()
+
+rag_service = RAGService(vector_store_retriever, llm)
 
 # --- State ---
 class State(TypedDict, total=False):
@@ -41,7 +44,6 @@ class RouteDecision(BaseModel):
 
 
 def route_node(state: State) -> State:
-    llm = rag_service.llm
     q = (state.get("query") or "").strip()
 
     invoke_prompt = (
@@ -91,7 +93,6 @@ def route_next(state: State) -> str:
 
 
 def general_node(state: State) -> State:
-    llm = rag_service.llm
     q = state["query"]
 
     answer = llm.invoke(
@@ -109,7 +110,6 @@ def general_node(state: State) -> State:
 
 
 def clarify_node(state: State) -> State:
-    llm = rag_service.llm
     q = state["query"]
 
     clarification = llm.invoke(
@@ -142,7 +142,6 @@ class HopPlan(BaseModel):
 
 
 def plan_multihop_rag_node(state: State) -> State:
-    llm = rag_service.llm
     hop = state.get("hop", 0)
     max_hops = state.get("max_hops", 3)
 
@@ -189,7 +188,6 @@ def notes_node(state: State) -> State:
     Extract factual evidence from retrieved documents 
     for current subquestion in multi-hop RAG.
     """
-    llm = rag_service.llm
     notes = state.get("notes", [])
     subquestions = state.get("subquestions", [])
     docs = state.get("last_docs", [])
@@ -252,7 +250,6 @@ def final_multihop_rag_node(state: State) -> State:
         **state,
         "answer": answer + "\n\n---\nSources used:\n" + sources_txt,
     }
-
 
 # --- Assemble graph ---
 g = StateGraph(State)
