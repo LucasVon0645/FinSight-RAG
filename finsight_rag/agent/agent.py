@@ -2,11 +2,14 @@ from typing import Literal, TypedDict, List
 from pydantic import BaseModel
 from langgraph.graph import StateGraph, END
 from langchain_core.documents import Document
+from langchain_core.messages import AIMessage, HumanMessage, BaseMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from finsight_rag.llms.llm_service import get_chat_llm_from_cfg
 from finsight_rag.vector_store.vector_store_wrapper import VectorStoreWrapper
 from finsight_rag.rag.rag_service import RAGService
 from finsight_rag.agent.utils import dedupe_docs, format_sources
+from finsight_rag.logging_config import logger, query_preview
 
 MAPPING_ROUTE_MODE_TO_NODE = {
     "single_hop_rag": "single_hop_rag",
@@ -26,8 +29,10 @@ rag_service = RAGService(vector_store_retriever, llm)
 # --- State ---
 class State(TypedDict, total=False):
     query: str  # user question
+    chat_history: List[BaseMessage]  # recent messages without sources
     done: bool  # whether finished retrieving/answering
     route_mode: RouteModeType
+    route_reason: str
     # multi-hop
     hop: int
     max_hops: int
@@ -35,20 +40,45 @@ class State(TypedDict, total=False):
     notes: List[str]  # accumulated notes
     subquestions: List[str] # all subquestions asked
     answer: str
+    sources: str
     last_docs: List[Document]
     notes_src_docs: List[Document]
 
 
 class RouteDecision(BaseModel):
     mode: RouteModeType
+    reason: str
+
+
+def format_chat_history(chat_history: List[BaseMessage] | None) -> str:
+    """Format recent source-free messages for LLM prompts."""
+    if not chat_history:
+        return "No previous conversation."
+
+    return "\n".join(
+        f"- {'user' if isinstance(message, HumanMessage) else 'assistant'}: {message.content}"
+        for message in chat_history
+    ) or "No previous conversation."
+
+
+def to_chat_messages(messages: List[dict[str, str]] | None) -> List[BaseMessage]:
+    """Convert UI messages into LangChain messages, excluding source markup."""
+    result: List[BaseMessage] = []
+    for message in messages or []:
+        content = message.get("content", "")
+        if message.get("role") == "user":
+            result.append(HumanMessage(content=content))
+        elif message.get("role") == "assistant":
+            result.append(AIMessage(content=content))
+    return result
 
 
 def route_node(state: State) -> State:
     q = (state.get("query") or "").strip()
 
-    invoke_prompt = (
+    router_instructions = (
         "Return ONLY valid JSON. No extra text.\n"
-        'Output format: {"mode": "<single_hop_rag | multihop_rag | general | clarify>"}\n\n'
+        'Output format: {{"mode": "<single_hop_rag | multihop_rag | general | clarify>", "reason": "brief explanation"}}\n\n'
         "You are a router for a financial QA system.\n\n"
         "Definitions:\n"
         "- single_hop_rag: one document, one company, one period, simple lookup.\n"
@@ -56,20 +86,46 @@ def route_node(state: State) -> State:
         "- general: conceptual, no documents needed.\n"
         "- clarify: the query is not clear if is conceptual or document based.\n\n"
         "Rules (important):\n"
+        "- Resolve references such as 'this company', 'the company', 'they', 'it', and 'that period' using the previous conversation.\n"
+        "- If the previous conversation identifies exactly one company or period, treat the reference as resolved and do not choose clarify.\n"
+        "- A follow-up question inherits the company, period, and subject from the previous conversation unless the user explicitly changes them.\n"
+        "- Choose clarify only when the reference has multiple plausible meanings or cannot be resolved from the conversation.\n"
         "- Default to single_hop_rag.\n"
         "- Use multihop_rag ONLY if clearly required.\n"
         "- Simple questions like 'What was the revenue of Company X?' → single_hop_rag.\n"
         "- Comparisons, trends, multiple years/companies, or 'why/explain' → multihop_rag.\n\n"
-        "Do NOT answer the question.\n\n"
-        f"User query:\n{q}\n"
+        "Decision requirements:\n"
+        "- Return a brief reason that cites the evidence from the conversation or query.\n"
+        "- If the query is a follow-up and the previous conversation contains exactly one plausible company, resolve the reference to that company.\n"
+        "- For example, if the conversation mentions Embraer and the user asks 'How many aircraft did this company sell?', choose single_hop_rag, not clarify.\n"
+        "Do NOT answer the question.\n"
+    )
+
+    router_prompt = ChatPromptTemplate.from_messages([
+        ("system", router_instructions),
+        MessagesPlaceholder(variable_name="chat_history"),
+        ("human", "User query:\n{query}"),
+    ])
+    router_messages = router_prompt.format_messages(
+        chat_history=state.get("chat_history") or [],
+        query=q,
     )
 
     decision_dict = llm.with_structured_output(
         RouteDecision, method="json_schema"
-    ).invoke(invoke_prompt)
+    ).invoke(router_messages)
     decision = RouteDecision.model_validate(decision_dict)
+    logger.info(
+        "route_node decision mode={} reason={} query={}",
+        decision.mode,
+        decision.reason,
+        query_preview(q),
+    )
 
-    out: State = {"route_mode": decision.mode}
+    out: State = {
+        "route_mode": decision.mode,
+        "route_reason": decision.reason,
+    }
 
     # Robust default init for multihop to prevent state leakage if state dict is reused.
     if decision.mode == "multihop_rag":
@@ -100,6 +156,7 @@ def general_node(state: State) -> State:
         "Answer the user's question using general knowledge only.\n"
         "Do NOT reference or imply the existence of internal documents.\n"
         "If helpful, ask a brief follow-up question at the end.\n\n"
+        f"Previous conversation:\n{format_chat_history(state.get('chat_history'))}\n\n"
         f"Question:\n{q}\n"
     ).content
 
@@ -116,7 +173,10 @@ def clarify_node(state: State) -> State:
         "You are a financial assistant.\n"
         "The user's question is ambiguous or incomplete.\n"
         "For example, missing company name, metric, or time period.\n"
+        "Before asking for clarification, inspect the previous conversation and resolve references such as 'this company', 'the company', 'they', 'it', and 'that period'.\n"
+        "If exactly one company or period is established in the conversation, use it and do not ask the user to repeat it.\n"
         "Ask ONE short clarification question that would enable document retrieval.\n\n"
+        f"Previous conversation:\n{format_chat_history(state.get('chat_history'))}\n\n"
         f"User question:\n{q}\n"
     ).content
 
@@ -127,10 +187,15 @@ def clarify_node(state: State) -> State:
 
 
 def single_hop_rag_node(state: State) -> State:
-    answer, sources_str = rag_service.answer(question=state["query"], return_docs=False)
+    answer, sources_str = rag_service.answer(
+        question=state["query"],
+        chat_history=state.get("chat_history"),
+        return_docs=False,
+    )
     return {
         **state,
-        "answer": answer + "\n\n---\nSources used:\n" + sources_str,
+        "answer": answer,
+        "sources": sources_str,
         "done": True,
     }
 
@@ -155,6 +220,7 @@ def plan_multihop_rag_node(state: State) -> State:
         "Return ONLY valid JSON (no extra text).\n"
         'Output keys exactly: {"subquestion": string, "done": boolean}\n\n'
         f"Previous subquestions: {previous_subquestions}\n"
+        f"Previous conversation:\n{format_chat_history(state.get('chat_history'))}\n"
         f"User query: {state['query']}\n"
         f"Current notes:\n{notes}\n\n"
         "Rules:\n"
@@ -242,13 +308,14 @@ def final_multihop_rag_node(state: State) -> State:
         "Keep citations from the notes in the final answer, e.g., "
         "(annual_report.pdf page=12 year=2023).\n\n"
         f"User query: {state['query']}\n"
+        f"Previous conversation:\n{format_chat_history(state.get('chat_history'))}\n"
         f"Notes:\n{joined_notes}\n"
     ).content
 
-    # Append sources for transparency/debugging.
     return {
         **state,
-        "answer": answer + "\n\n---\nSources used:\n" + sources_txt,
+        "answer": answer,
+        "sources": sources_txt,
     }
 
 # --- Assemble graph ---

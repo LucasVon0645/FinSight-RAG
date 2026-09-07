@@ -9,7 +9,7 @@ from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 
 import finsight_rag.config as config
-from finsight_rag.utils import load_yaml
+from finsight_rag.utils import load_yaml, resolve_project_path
 from finsight_rag.ingest.utils import extract_company_from_filename, extract_year_from_filename
 
 class VectorStoreWrapper:
@@ -19,7 +19,7 @@ class VectorStoreWrapper:
         rag_config_path = (impresources.files(config) / "rag_config.yaml")
         rag_config_dict = load_yaml(rag_config_path)
         
-        chroma_dir = rag_config_dict["vector_store_path"]
+        chroma_dir = resolve_project_path(rag_config_dict["vector_store_path"])
         embedding_model_id = rag_config_dict["embedding_model"]
         top_k_chunks = rag_config_dict.get("k", 5)
         

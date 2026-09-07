@@ -1,6 +1,12 @@
 import os
 import shutil
+from html import escape
+import re
 import gradio as gr
+
+from finsight_rag.logging_config import configure_logging, logger
+
+configure_logging()
 
 import finsight_rag.agent.agent as agent
 from finsight_rag.utils import get_local_pdfs_dir, list_local_pdfs, get_pdf_path
@@ -10,20 +16,59 @@ vector_store_wrapper = agent.vector_store_wrapper
 
 PDF_DIR = get_local_pdfs_dir()
 
+
+def render_assistant_message(answer: str, sources: str = "") -> str:
+    """Render an answer with its sources in a per-message disclosure."""
+    answer_html = escape(answer or "").replace("\n", "<br>")
+    if not sources:
+        return answer_html
+
+    sources_html = escape(sources).replace("\n", "<br>")
+    return (
+        f'<div class="finsight-answer">{answer_html}</div>'
+        '<details class="finsight-sources">'
+        '<summary>Sources</summary>'
+        f'<div class="finsight-source-content">{sources_html}</div>'
+        "</details>"
+    )
+
+
+def get_source_free_history(history, max_turns: int = 3):
+    """Return recent user/assistant turns without the rendered source disclosure."""
+    source_free_messages = []
+    for message in history or []:
+        content = message.get("content", "")
+        if not isinstance(content, str):
+            continue
+
+        content = re.sub(r"<details.*?</details>", "", content, flags=re.DOTALL)
+        content = re.sub(r"<br\s*/?>", "\n", content, flags=re.IGNORECASE)
+        content = re.sub(r"<[^>]+>", "", content)
+        source_free_messages.append({"role": message["role"], "content": content.strip()})
+
+    return source_free_messages[-(max_turns * 2):]
+
 def call_agent(message: str, history):
     """
     Call the RAG agent with the user's message and chat history.
     """
     history = history or []
+    logger.info("UI request started question={}", message[:120])
 
-    output = app.invoke({"query": message})
+    output = app.invoke({
+        "query": message,
+        "chat_history": agent.to_chat_messages(get_source_free_history(history)),
+    })
     answer = output.get("answer", "")
+    sources = output.get("sources", "")
     route_mode = output.get("route_mode")
 
     # Build debug markdown (unchanged)
     debug_md = []
     if route_mode:
         debug_md.append(f"**route_mode:** `{route_mode}`")
+    if output.get("route_reason"):
+        debug_md.append(f"**route_reason:** {output['route_reason']}")
     if route_mode == "multihop_rag":
         hop = output.get("hop")
         notes = output.get("notes", [])
@@ -39,8 +84,9 @@ def call_agent(message: str, history):
     # NEW: messages format
     history = history + [
         {"role": "user", "content": message},
-        {"role": "assistant", "content": answer},
+        {"role": "assistant", "content": render_assistant_message(answer, sources)},
     ]
+    logger.info("UI request completed route_mode={}", route_mode or "unknown")
     return "", history, debug_text
 
 def refresh_pdf_list(dropdown_value=None):

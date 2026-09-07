@@ -1,14 +1,23 @@
-from dataclasses import dataclass
-from typing import List, Optional
-from importlib import resources as impresources
+from time import perf_counter
+from typing import List
 
 from langchain_core.documents import Document
 from langchain_core.vectorstores import VectorStoreRetriever
+from langchain_core.messages import BaseMessage
 from langchain_huggingface import ChatHuggingFace
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import MessagesPlaceholder
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
+from finsight_rag.logging_config import logger, query_preview
+
+
+def history_for_retrieval(messages: List[BaseMessage] | None) -> str:
+    """Flatten structured chat messages into text for vector retrieval."""
+    if not messages:
+        return ""
+    return "\n".join(message.content for message in messages)
 
 def format_sources(docs: List[Document]) -> str:
     blocks = []
@@ -46,12 +55,14 @@ class RAGService:
         self.retriever = vector_store_retriever
 
         self.llm = llm
+        logger.info("RAGService initialized llm_type={}", type(llm).__name__)
 
         # Prompt (simple + reliable for RAG)
         self.prompt = ChatPromptTemplate.from_messages([
             ("system",
              "You answer using ONLY the provided context. "
              "If the answer is not in the context, say you don't know."),
+            MessagesPlaceholder(variable_name="chat_history"),
             ("human", "Context:\n{context}\n\nQuestion:\n{question}")
         ])
 
@@ -62,12 +73,24 @@ class RAGService:
         # - Generate answer with LLM
         # - Parse to string
         self.chain = (
-            RunnablePassthrough()  # incoming is the question string
-            | {"question": RunnablePassthrough()}
-            | RunnablePassthrough.assign(documents=lambda x: self.retriever.invoke(x["question"]))
+            RunnablePassthrough()
+            | {
+                "question": lambda x: x["question"],
+                "chat_history": lambda x: x.get("chat_history", []),
+            }
+            | RunnablePassthrough.assign(
+                documents=lambda x: self.retriever.invoke(
+                    f"{history_for_retrieval(x.get('chat_history'))}\n"
+                    f"Current question: {x['question']}"
+                )
+            )
             | RunnablePassthrough.assign(
                 answer=(
-                    (lambda x: {"question": x["question"], "context": format_sources(x["documents"])})
+                    (lambda x: {
+                        "question": x["question"],
+                        "chat_history": x.get("chat_history", []),
+                        "context": format_sources(x["documents"]),
+                    })
                     | self.prompt
                     | self.llm
                     | StrOutputParser()
@@ -76,7 +99,11 @@ class RAGService:
         )
         
         self.chain_from_context = (
-            {"context": RunnablePassthrough(), "question": RunnablePassthrough()}
+            {
+                "context": lambda x: x["context"],
+                "question": lambda x: x["question"],
+                "chat_history": lambda x: x.get("chat_history", []),
+            }
             | self.prompt
             | self.llm
             | StrOutputParser()
@@ -84,40 +111,107 @@ class RAGService:
 
     def retrieve(self, question: str, company: str | None = None) -> List[Document]:
         """Retrieve documents for the question. If company is given, filter to that company only."""
-        docs = self.retriever.invoke(question)
-        
-        if company:
-            company = company.lower().strip()
-            docs = [d for d in docs if (d.metadata or {}).get("company", "").lower().strip() == company]
-        return docs
+        started = perf_counter()
+        logger.info(
+            "RAGService.retrieve started question={} company_filter={}",
+            query_preview(question),
+            company or "none",
+        )
+        try:
+            docs = self.retriever.invoke(question)
+            retrieved_count = len(docs)
+
+            if company:
+                company = company.lower().strip()
+                docs = [
+                    d for d in docs
+                    if (d.metadata or {}).get("company", "").lower().strip() == company
+                ]
+
+            logger.info(
+                "RAGService.retrieve completed retrieved={} returned={} duration_ms={:.1f}",
+                retrieved_count,
+                len(docs),
+                (perf_counter() - started) * 1000,
+            )
+            return docs
+        except Exception:
+            logger.exception("RAGService.retrieve failed question={}", query_preview(question))
+            raise
     
-    def answer(self, question: str, return_docs: bool = False):
+    def answer(
+        self,
+        question: str,
+        chat_history: List[BaseMessage] | None = None,
+        return_docs: bool = False,
+    ):
         """
         Generate an answer to the question using retrieved documents. The documents are
         retrieved internally from the retriever.
         Returns: (answer, sources_str) if return_docs is False, else (answer, docs)
         """
 
-        out = self.chain.invoke(question)
-        
-        answer: str = out["answer"]
-        docs: List[Document] = out["documents"]
-        
-        if return_docs:
-            return answer, docs
-        
-        sources_str = format_sources(docs)
-        return answer, sources_str
+        started = perf_counter()
+        logger.info(
+            "RAGService.answer started question={} return_docs={}",
+            query_preview(question),
+            return_docs,
+        )
+        try:
+            out = self.chain.invoke({"question": question, "chat_history": chat_history or []})
+            answer: str = out["answer"]
+            docs: List[Document] = out["documents"]
+
+            logger.info(
+                "RAGService.answer completed documents={} duration_ms={:.1f}",
+                len(docs),
+                (perf_counter() - started) * 1000,
+            )
+
+            if return_docs:
+                return answer, docs
+
+            sources_str = format_sources(docs)
+            return answer, sources_str
+        except Exception:
+            logger.exception("RAGService.answer failed question={}", query_preview(question))
+            raise
     
-    def answer_from_docs(self, question: str, docs: List[Document]):
+    def answer_from_docs(
+        self,
+        question: str,
+        docs: List[Document],
+        chat_history: List[BaseMessage] | None = None,
+    ):
         """
         Generate an answer using ONLY the supplied docs (no retrieval).
         Returns: (answer, sources_str)
         """
-        sources_str = format_sources(docs)
+        started = perf_counter()
+        logger.info(
+            "RAGService.answer_from_docs started question={} documents={}",
+            query_preview(question),
+            len(docs),
+        )
+        try:
+            sources_str = format_sources(docs)
+            out = self.chain_from_context.invoke(
+                {
+                    "question": question,
+                    "context": sources_str,
+                    "chat_history": chat_history or [],
+                }
+            )
 
-        # use the same prompt template you already use, but bypass retriever
-        out = self.chain_from_context.invoke({"question": question, "context": sources_str})
-
-        answer = out["answer"] if isinstance(out, dict) and "answer" in out else out
-        return answer, sources_str
+            answer = out["answer"] if isinstance(out, dict) and "answer" in out else out
+            logger.info(
+                "RAGService.answer_from_docs completed duration_ms={:.1f}",
+                (perf_counter() - started) * 1000,
+            )
+            return answer, sources_str
+        except Exception:
+            logger.exception(
+                "RAGService.answer_from_docs failed question={}",
+                query_preview(question),
+            )
+            raise

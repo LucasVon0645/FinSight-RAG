@@ -1,12 +1,22 @@
 import os
+from pathlib import Path
 import yaml
 from importlib import resources as impresources
 import finsight_rag.config as config
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 def load_yaml(file_path: str) -> dict:
     """Load a YAML file and return its contents as a dictionary."""
     with open(file_path, 'r', encoding='utf-8') as file:
         return yaml.safe_load(file)
+
+def resolve_project_path(path_value: str) -> str:
+    """Resolve a config path relative to the repository root."""
+    path = Path(path_value).expanduser()
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    return str(path.resolve())
 
 def load_data_config(config_path: str) -> dict:
     """Load data configuration from a YAML file."""
@@ -29,7 +39,7 @@ def list_local_pdfs() -> list[str]:
     """List all PDF files in the local PDFs directory."""
     rag_config_path = str(impresources.files(config) / "rag_config.yaml")
     rag_config = load_yaml(str(rag_config_path))
-    pdfs_dir_path = rag_config.get("dataset_path", "data/pdfs")
+    pdfs_dir_path = resolve_project_path(rag_config.get("dataset_path", "data/pdfs"))
     if not os.path.isdir(pdfs_dir_path):
         return []
     files = [f for f in os.listdir(pdfs_dir_path) if f.lower().endswith(".pdf")]
@@ -41,7 +51,7 @@ def get_local_pdfs_dir() -> str:
     rag_config_path = str(impresources.files(config) / "rag_config.yaml")
     rag_config = load_yaml(str(rag_config_path))
     local_pdfs_dir: str = rag_config.get("dataset_path", "data/pdfs")
-    return local_pdfs_dir
+    return resolve_project_path(local_pdfs_dir)
 
 def get_pdf_path(selected_filename: str):
     """Get the full path of a selected PDF file."""

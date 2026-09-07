@@ -11,7 +11,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 
 import finsight_rag.config as config
-from finsight_rag.utils import load_yaml
+from finsight_rag.utils import load_yaml, resolve_project_path
 from finsight_rag.ingest.utils import extract_company_from_filename, extract_year_from_filename
 
 @dataclass
@@ -149,8 +149,8 @@ if __name__ == "__main__":
     rag_config_path = (impresources.files(config) / "rag_config.yaml")
 
     rag_config = load_yaml(str(rag_config_path))
-    dataset_path = rag_config["dataset_path"]
-    vector_store_path = rag_config["vector_store_path"]
+    dataset_path = resolve_project_path(rag_config["dataset_path"])
+    vector_store_path = resolve_project_path(rag_config["vector_store_path"])
     embedding_model = rag_config.get("embedding_model", "sentence-transformers/all-MiniLM-L6-v2")
     
     print("Ingesting dataset...")

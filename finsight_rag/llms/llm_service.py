@@ -8,6 +8,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 from finsight_rag.utils import load_yaml, get_gemini_api_key, get_hf_api_key
 import finsight_rag.config as config
+from finsight_rag.logging_config import logger
 
 def build_hf_local_text_gen_llm(
     model_id: str,
@@ -85,16 +86,29 @@ def get_chat_llm_from_cfg():
     model_id = cfg.get("model_id", "Qwen/Qwen2.5-7B-Instruct")
     temperature = cfg.get("temperature", 0.0)
     max_new_tokens = cfg.get("max_new_tokens", 400)
+    provider = "gemini" if "gemini" in model_id.lower() else "huggingface"
+
+    logger.info(
+        "Loading chat model provider={} model={} temperature={} max_new_tokens={}",
+        provider,
+        model_id,
+        temperature,
+        max_new_tokens,
+    )
 
     if "gemini" in model_id.lower():
-        return build_gemini_chat_llm(
+        llm = build_gemini_chat_llm(
             model_id=model_id,
             temperature=temperature,
             max_new_tokens=max_new_tokens,
         )
-    
-    return build_hf_remote_chat_llm(
-        model_id=model_id,
-        temperature=temperature,
-        max_new_tokens=max_new_tokens,
-    )
+
+    else:
+        llm = build_hf_remote_chat_llm(
+            model_id=model_id,
+            temperature=temperature,
+            max_new_tokens=max_new_tokens,
+        )
+
+    logger.info("Chat model ready provider={} model={}", provider, model_id)
+    return llm
